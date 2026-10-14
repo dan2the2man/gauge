@@ -12,6 +12,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hosting: NSHostingView<MenuPanel>!
     private var tile: TileController!
     private var tileItem: NSMenuItem!
+    private var lockItem: NSMenuItem!
+    private var resetTileItem: NSMenuItem!
     private var clickItem: NSMenuItem!
     private var loginItem: NSMenuItem!
     private var bag = Set<AnyCancellable>()
@@ -125,6 +127,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         clickItem = NSMenuItem(title: "Tile Ignores Clicks", action: #selector(toggleClickThrough), keyEquivalent: "")
         clickItem.target = self
         menu.addItem(clickItem)
+        lockItem = NSMenuItem(title: "Lock Tile Position", action: #selector(toggleLock), keyEquivalent: "")
+        lockItem.target = self
+        menu.addItem(lockItem)
+        resetTileItem = NSMenuItem(title: "Reset Tile Position", action: #selector(resetTile), keyEquivalent: "")
+        resetTileItem.target = self
+        menu.addItem(resetTileItem)
         loginItem = NSMenuItem(title: "Open at Login", action: #selector(toggleLogin), keyEquivalent: "")
         loginItem.target = self
         menu.addItem(loginItem)
@@ -141,6 +149,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         tileItem.state = tile.isVisible ? .on : .off
         clickItem.state = defaults.bool(forKey: "tileClickThrough") ? .on : .off
         clickItem.isEnabled = tile.isVisible
+        lockItem.state = defaults.bool(forKey: TileController.lockKey) ? .on : .off
+        lockItem.isEnabled = tile.isVisible
+        resetTileItem.isEnabled = tile.isVisible
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         store.menuOpened()
         store.refreshIfOlder(than: 60)
@@ -161,6 +172,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func refreshNow() { store.refresh() }
+
+    @objc private func toggleLock() {
+        defaults.set(!defaults.bool(forKey: TileController.lockKey), forKey: TileController.lockKey)
+    }
+    @objc private func resetTile() { tile.resetPosition() }
 
     @objc private func toggleTile() {
         let on = !tile.isVisible
@@ -207,6 +223,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let w = statusItem.button?.window { Log.write("status item frame \(NSStringFromRect(w.frame))") }
         case "hoverOn": store.debugHover = true
         case "hoverOff": store.debugHover = false
+        case "dragTest":
+            let before = tile.frame
+            tile.simulateDrag(dx: -300, dy: -200)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self else { return }
+                Log.write("dragTest locked=\(self.defaults.bool(forKey: TileController.lockKey)) before=\(NSStringFromRect(before)) after=\(NSStringFromRect(self.tile.frame)) saved=\(self.defaults.string(forKey: "tileTopLeft") ?? "nil")")
+            }
         case "tileInfo": Log.write("tile window \(tile.windowNumber) visible=\(tile.isVisible) frame=\(tile.frameDescription)")
         default:
             if cmd.hasPrefix("moveTo:") {

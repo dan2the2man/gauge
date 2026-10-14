@@ -3,23 +3,55 @@ import SwiftUI
 import Combine
 
 private final class DraggableHostingView<Content: View>: NSHostingView<Content> {
-    override var mouseDownCanMoveWindow: Bool { true }
+    override var mouseDownCanMoveWindow: Bool { false }   // TilePanel drags itself
 }
 
-private final class TilePanel: NSPanel {
+/// Moves itself on mouse drags. Window-server dragging (isMovableByWindowBackground /
+/// mouseDownCanMoveWindow) never engages for this non-activating, never-key panel at desktop
+/// level under SwiftUI content, so the drag is tracked here explicitly.
+final class TilePanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+    var isLocked: () -> Bool = { false }
+    var didFinishDrag: () -> Void = {}
+
+    override func sendEvent(_ event: NSEvent) {
+        guard event.type == .leftMouseDown, !isLocked() else { return super.sendEvent(event) }
+        trackDrag(from: event)
+    }
+
+    /// Screen position of a mouse event, independent of where the window has moved since.
+    private func screenPoint(_ e: NSEvent, origin: NSPoint) -> NSPoint {
+        NSPoint(x: origin.x + e.locationInWindow.x, y: origin.y + e.locationInWindow.y)
+    }
+
+    private func trackDrag(from down: NSEvent) {
+        let startOrigin = frame.origin
+        let startMouse = screenPoint(down, origin: startOrigin)
+        var moved = false
+        while let e = nextEvent(matching: [.leftMouseDragged, .leftMouseUp],
+                                until: .distantFuture, inMode: .eventTracking, dequeue: true) {
+            let p = screenPoint(e, origin: frame.origin)
+            let dx = p.x - startMouse.x, dy = p.y - startMouse.y
+            if !moved, hypot(dx, dy) < 3 { if e.type == .leftMouseUp { break } else { continue } }
+            moved = true
+            setFrameOrigin(NSPoint(x: startOrigin.x + dx, y: startOrigin.y + dy))
+            if e.type == .leftMouseUp { break }
+        }
+        if moved { didFinishDrag() } else { super.sendEvent(down) }
+    }
 }
 
 /// A small glass tile that lives at desktop level: below every window, on all Spaces,
 /// never in Cmd-Tab or Mission Control's window list.
 final class TileController {
-    private let panel: NSPanel
+    private let panel: TilePanel
     private let store: Store
     private var hosting: NSView!
     private lazy var measurer = NSHostingView(rootView: TileView(store: store))
     private var sizeObserver: Any?
     private static let frameKey = "tileTopLeft"
+    static let lockKey = "tileLocked"
 
     init(store: Store) {
         self.store = store
@@ -30,7 +62,8 @@ final class TileController {
         panel.hasShadow = true
         panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenNone]
-        panel.isMovableByWindowBackground = true
+        panel.isMovableByWindowBackground = false
+        panel.isLocked = { UserDefaults.standard.bool(forKey: TileController.lockKey) }
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .none
@@ -71,9 +104,7 @@ final class TileController {
             DispatchQueue.main.async { self?.fitToContent(anchorTop: true) }
         }
 
-        NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: panel, queue: .main) { [weak self] _ in
-            self?.savePosition()
-        }
+        panel.didFinishDrag = { [weak self] in self?.clampToVisible(); self?.savePosition() }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             self?.keepOnScreen()
         }
@@ -97,6 +128,35 @@ final class TileController {
         guard let screen = NSScreen.main else { return }
         panel.setFrameTopLeftPoint(NSPoint(x: topLeft.x, y: screen.frame.maxY - topLeft.y))
     }
+    var frame: NSRect { panel.frame }
+
+    #if DEBUG
+    /// Self-test: feeds a synthetic down → drags → up through the panel's real event path.
+    func simulateDrag(dx: CGFloat, dy: CGFloat) {
+        let o = panel.frame.origin
+        let start = NSPoint(x: 40, y: panel.frame.height - 30)       // window coords
+        func ev(_ t: NSEvent.EventType, _ p: NSPoint) -> NSEvent {
+            NSEvent.mouseEvent(with: t, location: p, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                               windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        // Window-relative points computed against the ORIGINAL origin, as the window server would
+        // for a cursor moving across a window that is itself moving.
+        var origin = o
+        for i in 1...10 {
+            let target = NSPoint(x: o.x + start.x + dx * CGFloat(i) / 10, y: o.y + start.y + dy * CGFloat(i) / 10)
+            origin = NSPoint(x: o.x + dx * CGFloat(i - 1) / 10, y: o.y + dy * CGFloat(i - 1) / 10)
+            NSApp.postEvent(ev(i == 10 ? .leftMouseUp : .leftMouseDragged,
+                               NSPoint(x: target.x - origin.x, y: target.y - origin.y)), atStart: false)
+        }
+        panel.sendEvent(ev(.leftMouseDown, start))
+    }
+    #endif
+
+    /// Menu: Reset Tile Position.
+    func resetPosition() {
+        UserDefaults.standard.removeObject(forKey: Self.frameKey)
+        restorePosition()
+    }
     var windowNumber: Int { panel.windowNumber }
 
     func setVisible(_ on: Bool) { on ? panel.orderFrontRegardless() : panel.orderOut(nil) }
@@ -104,9 +164,9 @@ final class TileController {
 
     private func restorePosition() {
         if let s = UserDefaults.standard.string(forKey: Self.frameKey) {
-            let p = NSPointFromString(s)
-            panel.setFrameTopLeftPoint(p)
+            panel.setFrameTopLeftPoint(NSPointFromString(s))
             keepOnScreen()
+            clampToVisible()
             return
         }
         guard let screen = NSScreen.main else { return }
@@ -118,6 +178,16 @@ final class TileController {
         UserDefaults.standard.set(NSStringFromPoint(NSPoint(x: panel.frame.minX, y: panel.frame.maxY)), forKey: Self.frameKey)
     }
 
+    /// Pull the tile fully inside the visible frame of the screen it is mostly on.
+    private func clampToVisible() {
+        var f = panel.frame
+        let screen = NSScreen.screens.max { $0.visibleFrame.intersection(f).area < $1.visibleFrame.intersection(f).area }
+        guard let vf = screen?.visibleFrame else { return }
+        f.origin.x = min(max(f.origin.x, vf.minX), vf.maxX - f.width)
+        f.origin.y = min(max(f.origin.y, vf.minY), vf.maxY - f.height)
+        if f.origin != panel.frame.origin { panel.setFrameOrigin(f.origin) }
+    }
+
     private func keepOnScreen() {
         let f = panel.frame
         if NSScreen.screens.contains(where: { $0.visibleFrame.intersects(f) }) { return }
@@ -125,3 +195,5 @@ final class TileController {
         restorePosition()
     }
 }
+
+private extension NSRect { var area: CGFloat { isNull ? 0 : width * height } }

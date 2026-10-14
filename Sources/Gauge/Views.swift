@@ -280,6 +280,7 @@ struct TileView: View {
     @ObservedObject var store: Store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var hoverBox = Box(false)
+    @AppStorage(TileController.lockKey) private var locked = false
 
     var body: some View {
         let now = store.now
@@ -352,6 +353,14 @@ struct TileView: View {
         .frame(width: 196, alignment: .leading)
         .animation(Motion.ifAllowed(Motion.spring, reduceMotion) ?? .linear(duration: 0), value: detail)
         .animation(Motion.ifAllowed(Motion.spring, reduceMotion), value: snap?.weekly?.remainingPercent)
+        .overlay(alignment: .top) {
+            // Drag affordance: a faint grip, only on hover and only while unlocked.
+            HStack(spacing: 3) { ForEach(0..<3, id: \.self) { _ in Circle().frame(width: 3, height: 3) } }
+                .foregroundStyle(.secondary)
+                .padding(.top, 5)
+                .opacity(detail && !locked ? 0.55 : 0)
+                .accessibilityHidden(true)
+        }
         .contentShape(Rectangle())
         .onHover { h in hoverBox.value = h }
     }
