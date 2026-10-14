@@ -7,7 +7,7 @@ A quiet Codex usage meter for the macOS menu bar and desktop.
 Gauge reads only the current user's own Codex usage, through the Codex install on your Mac. Gauge has no accounts or telemetry of its own; see **Data boundaries** for exactly what it touches. If Codex isn't installed or signed in, it says so on first launch and in the menu.
 
 - **Menu bar:** `37% left · 4d 13h` shows the percent **remaining** in the tightest window (weekly today). The text turns orange at 20% left and red at 5% left, and is dimmed when the data is stale.
-- **Dropdown:** a weekly bar that drains as you use it, with the reset time, the 5-hour window (only if Codex reports one), banked-reset chips with expiry dates (orange when under 7 days), credits with average daily burn over the last week, an "As of" time, then the items Open Usage Settings… (opens `codex://settings/usage` and nothing else), Refresh (⌘R), Show Desktop Tile, Tile Ignores Clicks, Open at Login, Check for Updates…, and Quit.
+- **Popover:** clicking the menu bar item opens a glass panel. The header shows the window and "As of" time, with Refresh (⌘R), Open Usage Settings (⌘,) and a gear menu (Open at Login, Check for Updates…, Quit ⌘Q). Below that are a large percent left with a bar (green above 25%, orange from 10 to 25%, red under 10%) and the reset time, then Banked resets (date pills, orange within 3 days) and Credits (with average daily burn) cards. The bottom row has a Desktop Tile toggle plus Lock, Ignore Clicks and Reset Position. Esc closes it.
 - **Desktop tile:** a glass panel at desktop level. It sits below all windows, appears on all Spaces, and stays out of Cmd-Tab. Drag it anywhere; its position is remembered. Hovering shows the exact reset date and time and the exact as-of time.
 
 ## Data boundaries
@@ -24,7 +24,7 @@ Gauge reads only the current user's own Codex usage, through the Codex install o
 Motion is quiet and uses short springs. All of it, including the freshness-line fade, stays off with Reduce Motion, and none of it runs at idle.
 - **Tile:** the percentage changes with a numeric text transition. The bar fills gently when the tile appears. There is one soft pulse when usage crosses into the 20% or 5% level. A small rotating refresh symbol shows only while a read is in flight (macOS 15+). Hovering reveals the exact times.
 - **Reset chips:** they highlight on hover and give the exact expiry in a tooltip.
-- **Dropdown:** it is static on purpose, because SwiftUI animations don't progress inside an NSMenu while it's tracking. The native menu items provide the press and highlight states.
+- **Popover:** the percent uses a numeric transition and Refresh spins while a read is in flight. Both are off with Reduce Motion. Reduce Transparency gives it an opaque background, and Increase Contrast adds an outline.
 - **Reduce Transparency:** the tile switches from Liquid Glass to an opaque material.
 
 ## Updates

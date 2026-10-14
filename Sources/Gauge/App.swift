@@ -4,18 +4,12 @@ import Combine
 import ServiceManagement
 import Sparkle
 
-final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppController: NSObject, NSApplicationDelegate {
     private let store = Store()
     private var statusItem: NSStatusItem!
-    private var menu: NSMenu!
-    private var panelItem: NSMenuItem!
-    private var hosting: NSHostingView<MenuPanel>!
+    private var popover: PopoverController!
+    private let model = PopoverModel()
     private var tile: TileController!
-    private var tileItem: NSMenuItem!
-    private var lockItem: NSMenuItem!
-    private var resetTileItem: NSMenuItem!
-    private var clickItem: NSMenuItem!
-    private var loginItem: NSMenuItem!
     private var bag = Set<AnyCancellable>()
     private let defaults = UserDefaults.standard
     /// Sparkle 2. Feed URL and public EdDSA key live in Info.plist (SUFeedURL / SUPublicEDKey).
@@ -29,10 +23,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.autosaveName = "GaugeStatusItem"
-        buildMenu()
-        statusItem.menu = menu
-
         tile = TileController(store: store)
+        buildPopover()
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(statusClicked)
+        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+
         tile.setClickThrough(defaults.bool(forKey: "tileClickThrough"))
         tile.setVisible(defaults.bool(forKey: "showTile"))
 
@@ -95,70 +91,51 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             button.appearsDisabled = true
             button.toolTip = "Codex usage unavailable"
         }
-        if let h = hosting {
-            let size = h.fittingSize
-            if h.frame.size != size { h.setFrameSize(size) }
+    }
+
+    private func buildPopover() {
+        model.refresh = { [weak self] in self?.store.refresh() }
+        model.openUsageSettings = { [weak self] in self?.popover.hide(); self?.openUsageSettings() }
+        model.setTileVisible = { [weak self] on in
+            guard let self else { return }
+            self.tile.setVisible(on); self.defaults.set(on, forKey: "showTile"); self.syncModel()
+        }
+        model.setLocked = { [weak self] on in self?.defaults.set(on, forKey: TileController.lockKey); self?.syncModel() }
+        model.setClickThrough = { [weak self] on in
+            guard let self else { return }
+            self.defaults.set(on, forKey: "tileClickThrough"); self.tile.setClickThrough(on); self.syncModel()
+        }
+        model.resetTile = { [weak self] in self?.tile.resetPosition() }
+        model.toggleLogin = { [weak self] in self?.toggleLogin(); self?.syncModel() }
+        model.checkForUpdates = { [weak self] in
+            guard let self else { return }
+            self.popover.hide(); NSApp.activate(ignoringOtherApps: true); self.updater.checkForUpdates(nil)
+        }
+        model.quit = { NSApp.terminate(nil) }
+        popover = PopoverController(store: store, model: model)
+        popover.onShow = { [weak self] in
+            guard let self else { return }
+            self.syncModel()
+            self.store.menuOpened()
+            self.store.refreshIfOlder(than: 60)
+        }
+        popover.onHide = { [weak self] in
+            self?.store.menuClosed()
+            self?.statusItem.button?.highlight(false)
         }
     }
 
-    private func buildMenu() {
-        menu = NSMenu()
-        menu.delegate = self
-        menu.autoenablesItems = false
-
-        hosting = NSHostingView(rootView: MenuPanel(store: store))
-        hosting.setFrameSize(hosting.fittingSize)
-        panelItem = NSMenuItem()
-        panelItem.view = hosting
-        menu.addItem(panelItem)
-        menu.addItem(.separator())
-
-        let open = NSMenuItem(title: "Open Usage Settings…", action: #selector(openUsageSettings), keyEquivalent: "")
-        open.target = self
-        menu.addItem(open)
-        let refresh = NSMenuItem(title: "Refresh", action: #selector(refreshNow), keyEquivalent: "r")
-        refresh.target = self
-        menu.addItem(refresh)
-        menu.addItem(.separator())
-
-        tileItem = NSMenuItem(title: "Show Desktop Tile", action: #selector(toggleTile), keyEquivalent: "")
-        tileItem.target = self
-        menu.addItem(tileItem)
-        clickItem = NSMenuItem(title: "Tile Ignores Clicks", action: #selector(toggleClickThrough), keyEquivalent: "")
-        clickItem.target = self
-        menu.addItem(clickItem)
-        lockItem = NSMenuItem(title: "Lock Tile Position", action: #selector(toggleLock), keyEquivalent: "")
-        lockItem.target = self
-        menu.addItem(lockItem)
-        resetTileItem = NSMenuItem(title: "Reset Tile Position", action: #selector(resetTile), keyEquivalent: "")
-        resetTileItem.target = self
-        menu.addItem(resetTileItem)
-        loginItem = NSMenuItem(title: "Open at Login", action: #selector(toggleLogin), keyEquivalent: "")
-        loginItem.target = self
-        menu.addItem(loginItem)
-        menu.addItem(.separator())
-        let upd = NSMenuItem(title: "Check for Updates…", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
-        upd.target = updater
-        menu.addItem(upd)
-        menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit Gauge", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(quit)
+    private func syncModel() {
+        model.tileVisible = tile.isVisible
+        model.tileLocked = defaults.bool(forKey: TileController.lockKey)
+        model.clickThrough = defaults.bool(forKey: "tileClickThrough")
+        model.loginOn = SMAppService.mainApp.status == .enabled
     }
 
-    func menuWillOpen(_ menu: NSMenu) {
-        tileItem.state = tile.isVisible ? .on : .off
-        clickItem.state = defaults.bool(forKey: "tileClickThrough") ? .on : .off
-        clickItem.isEnabled = tile.isVisible
-        lockItem.state = defaults.bool(forKey: TileController.lockKey) ? .on : .off
-        lockItem.isEnabled = tile.isVisible
-        resetTileItem.isEnabled = tile.isVisible
-        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        store.menuOpened()
-        store.refreshIfOlder(than: 60)
-        render()
+    @objc private func statusClicked() {
+        guard let b = statusItem.button else { return }
+        popover.toggle(below: b)
     }
-
-    func menuDidClose(_ menu: NSMenu) { store.menuClosed() }
 
     // MARK: actions
 
@@ -173,23 +150,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func refreshNow() { store.refresh() }
 
-    @objc private func toggleLock() {
-        defaults.set(!defaults.bool(forKey: TileController.lockKey), forKey: TileController.lockKey)
-    }
-    @objc private func resetTile() { tile.resetPosition() }
-
-    @objc private func toggleTile() {
-        let on = !tile.isVisible
-        tile.setVisible(on)
-        defaults.set(on, forKey: "showTile")
-    }
-
-    @objc private func toggleClickThrough() {
-        let on = !defaults.bool(forKey: "tileClickThrough")
-        defaults.set(on, forKey: "tileClickThrough")
-        tile.setClickThrough(on)
-    }
-
     @objc private func toggleLogin() {
         do {
             if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
@@ -203,7 +163,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "light": NSApp.appearance = NSAppearance(named: .aqua)
         default: NSApp.appearance = nil
         }
-        menu?.appearance = NSApp.appearance
     }
 
     #if DEBUG
@@ -212,9 +171,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let cmd = note.object as? String else { return }
         switch cmd {
         case "openMenu":
-            let t = Timer(timeInterval: 4, repeats: false) { [weak self] _ in self?.menu.cancelTracking() }
-            RunLoop.main.add(t, forMode: .common)
-            statusItem.button?.performClick(nil)
+            statusClicked()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                guard let self else { return }
+                Log.write("popover win=\(self.popover.panel.windowNumber) shown=\(self.popover.isShown) frame=\(NSStringFromRect(self.popover.panel.frame)) key=\(self.popover.panel.isKeyWindow)")
+            }
+        case "closeMenu": popover.hide()
         case "refresh": store.refresh()
         case "appearance:dark": applyAppearance("dark")
         case "appearance:light": applyAppearance("light")
