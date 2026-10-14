@@ -6,6 +6,7 @@
   <key>CFBundleName</key><string>Gauge</string>
   <key>CFBundleDisplayName</key><string>Gauge</string>
   <key>CFBundleExecutable</key><string>Gauge</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <!-- scripts/release.sh stamps these from VERSION and the git commit count -->
   <key>CFBundleShortVersionString</key><string>0.2.0</string>

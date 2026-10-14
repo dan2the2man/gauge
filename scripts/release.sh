@@ -54,8 +54,8 @@ if strings -a "$APP/Contents/MacOS/Gauge" | grep -q "$HOME"; then red "binary st
 cp Info.plist "$APP/Contents/Info.plist"
 $PB -c "Set :CFBundleShortVersionString $VERSION" -c "Set :CFBundleVersion $BUILD" "$APP/Contents/Info.plist"
 ditto .build/release/Sparkle.framework "$APP/Contents/Frameworks/Sparkle.framework"
-[ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/" && \
-  $PB -c "Add :CFBundleIconFile string AppIcon" "$APP/Contents/Info.plist" || true
+test -f Resources/AppIcon.icns || { red "missing Resources/AppIcon.icns"; exit 1; }
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"   # Info.plist: CFBundleIconFile = AppIcon
 # License notices: Gauge (MIT) and Sparkle (MIT + bundled third-party notices)
 cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
 cp "$ROOT/.tools/sparkle/LICENSE" "$APP/Contents/Resources/Sparkle-LICENSE.txt"
