@@ -1,13 +1,16 @@
 #!/bin/bash
 # Gauge release: build → sign (Developer ID) → notarize → staple → DMG → Sparkle appcast entry.
-# Without a Developer ID certificate it falls back to an ad-hoc, UNSIGNED build (loud warning).
+# Fails closed: a release REQUIRES a Developer ID Application identity and successful notarization.
+# For local development only, ALLOW_UNSIGNED=1 makes an ad-hoc, un-notarized build (loud warning).
 #
 # Env overrides:
 #   NOTARY_PROFILE   keychain profile for notarytool          (default: gauge-notary)
 #   SPARKLE_ACCOUNT  keychain account of the EdDSA key        (default: gauge)
 #   SPARKLE_BIN      dir with sign_update                     (default: .tools/sparkle/bin)
 #   SITE_URL         where the download page + appcast live   (default: read from Info.plist SUFeedURL)
-#   ALLOW_UNSIGNED=0 refuse to fall back to ad-hoc signing
+#   ALLOW_UNSIGNED=1 dev only: allow an ad-hoc, un-notarized build when no Developer ID is present
+#
+# Output (dist/): Gauge.app, Gauge.dmg, appcast.xml (EdDSA-signed feed; hand off to the site host).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
@@ -38,17 +41,24 @@ fi
 
 # 1. Build
 info "Building Gauge $VERSION ($BUILD)"
-swift build -c release 2>&1 | grep -E "error|Build complete" || true
-test -x .build/release/Gauge || { red "build failed"; exit 1; }
+rm -rf "$DIST"; rm -f .build/release/Gauge   # never package a stale executable or leave stale artifacts
+if ! swift build -c release; then red "build failed"; exit 1; fi
+test -x .build/release/Gauge || { red "build produced no executable"; exit 1; }
 
 # 2. Assemble the bundle
 rm -rf "$DIST"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
 cp .build/release/Gauge "$APP/Contents/MacOS/Gauge"
+# Strip debug symbols (they embed local build paths) before signing.
+strip -S "$APP/Contents/MacOS/Gauge"
+if strings -a "$APP/Contents/MacOS/Gauge" | grep -q "$HOME"; then red "binary still contains $HOME paths"; exit 1; fi
 cp Info.plist "$APP/Contents/Info.plist"
 $PB -c "Set :CFBundleShortVersionString $VERSION" -c "Set :CFBundleVersion $BUILD" "$APP/Contents/Info.plist"
 ditto .build/release/Sparkle.framework "$APP/Contents/Frameworks/Sparkle.framework"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/" && \
   $PB -c "Add :CFBundleIconFile string AppIcon" "$APP/Contents/Info.plist" || true
+# License notices: Gauge (MIT) and Sparkle (MIT + bundled third-party notices)
+cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
+cp "$ROOT/.tools/sparkle/LICENSE" "$APP/Contents/Resources/Sparkle-LICENSE.txt"
 FEED=$($PB -c "Print :SUFeedURL" Info.plist)
 SITE_URL=${SITE_URL:-${FEED%/appcast.xml}}
 
@@ -69,7 +79,11 @@ if [ -n "$IDENTITY" ]; then
   codesign --verify --strict --deep --verbose=2 "$APP"
 else
   SIGNED=0
-  if [ "${ALLOW_UNSIGNED:-1}" = 0 ]; then red "No 'Developer ID Application' identity and ALLOW_UNSIGNED=0"; exit 1; fi
+  if [ "${ALLOW_UNSIGNED:-0}" != 1 ]; then
+    red "No 'Developer ID Application' identity in the keychain. Refusing to build a release."
+    red "For a local dev build only, rerun with ALLOW_UNSIGNED=1."
+    exit 1
+  fi
   red "################################################################################"
   red "#  WARNING: no 'Developer ID Application' certificate found in the keychain.   #"
   red "#  Building an AD-HOC, UNSIGNED, UN-NOTARIZED Gauge. Gatekeeper WILL block it: #"
@@ -92,6 +106,8 @@ fi
 # 5. DMG (drag-to-Applications)
 info "Making DMG"
 STAGE=$(mktemp -d); ditto "$APP" "$STAGE/Gauge.app"; ln -s /Applications "$STAGE/Applications"
+mkdir "$STAGE/Licenses"; cp LICENSE "$STAGE/Licenses/Gauge-LICENSE.txt"
+cp "$ROOT/.tools/sparkle/LICENSE" "$STAGE/Licenses/Sparkle-LICENSE.txt"
 hdiutil create -quiet -volname "Gauge" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG"
 rm -rf "$STAGE"
 if [ $SIGNED = 1 ]; then
@@ -105,8 +121,10 @@ fi
 info "Signing update for Sparkle (keychain account: $SPARKLE_ACCOUNT)"
 SIG_ATTRS=$("$SPARKLE_BIN/sign_update" --account "$SPARKLE_ACCOUNT" "$DMG")   # sparkle:edSignature="…" length="…"
 URL="https://github.com/$REPO/releases/download/$TAG/Gauge.dmg"
-mkdir -p site
-python3 - "$ROOT/site/appcast.xml" "$VERSION" "$BUILD" "$URL" "$SIG_ATTRS" "$SITE_URL" <<'PY'
+FEED_OUT=$DIST/appcast.xml
+# Start from the currently published feed so older items are kept (absent on first release).
+curl -fsSL "$FEED" -o "$FEED_OUT.prev" 2>/dev/null && mv "$FEED_OUT.prev" "$FEED_OUT" || rm -f "$FEED_OUT.prev"
+python3 - "$FEED_OUT" "$VERSION" "$BUILD" "$URL" "$SIG_ATTRS" "$SITE_URL" <<'PY'
 import sys, os, re, email.utils
 path, ver, build, url, sig, site = sys.argv[1:]
 item = f'''    <item>
@@ -128,17 +146,23 @@ head = f'''<?xml version="1.0" encoding="utf-8"?>
     <language>en</language>
 '''
 old = open(path).read() if os.path.exists(path) else ''
+old = re.sub(r'<!-- sparkle-signatures:.*?-->\n?', '', old, flags=re.S)   # re-signed below
 items = re.findall(r'    <item>.*?</item>\n', old, re.S)
 items = [i for i in items if f'<sparkle:version>{build}</sparkle:version>' not in i]
 open(path, 'w').write(head + item + ''.join(items) + '  </channel>\n</rss>\n')
 PY
+# Sign the feed itself (signature embedded in the XML; app sets SURequireSignedFeed)
+"$SPARKLE_BIN/sign_update" --account "$SPARKLE_ACCOUNT" "$FEED_OUT"
+"$SPARKLE_BIN/sign_update" --account "$SPARKLE_ACCOUNT" --verify "$FEED_OUT" >/dev/null || { red "appcast signature check failed"; exit 1; }
+"$SPARKLE_BIN/sign_update" --account "$SPARKLE_ACCOUNT" --verify "$DMG" "$(sed -E 's/.*edSignature="([^"]+)".*/\1/' <<<"$SIG_ATTRS")" >/dev/null \
+  || { red "DMG signature check failed"; exit 1; }
 
 # 7. Summary
 echo
-info "Done: $DMG ($(du -h "$DMG" | cut -f1)), appcast entry written to site/appcast.xml"
+info "Done: $DMG ($(du -h "$DMG" | cut -f1)), signed feed: $FEED_OUT"
 [ $SIGNED = 1 ] || red "REMINDER: this build is ad-hoc signed only (no Developer ID, not notarized)."
 echo
 echo "Next, publish the release (Download button uses releases/latest/download/Gauge.dmg):"
 echo "  git tag $TAG && git push origin $TAG"
 echo "  gh release create $TAG \"$DMG\" --repo $REPO --title \"Gauge $VERSION\" --generate-notes"
-echo "Then redeploy site/ so $FEED serves the new appcast."
+echo "Then hand dist/appcast.xml to the site host so $FEED serves it (do not edit it after signing)."

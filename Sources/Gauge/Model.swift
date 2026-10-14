@@ -2,91 +2,6 @@ import Foundation
 import AppKit
 import Combine
 
-struct UsageWindow: Equatable {
-    var usedPercent: Int
-    var remainingPercent: Int { max(0, min(100, 100 - usedPercent)) }
-    var minutes: Int?
-    var resetsAt: Date?
-    var isWeekly: Bool { (minutes ?? 0) >= 24 * 60 }
-    var title: String {
-        guard let m = minutes else { return "Usage" }
-        if m >= 7 * 24 * 60 { return "Weekly" }
-        if m % 60 == 0 { return "\(m / 60)-hour" }
-        return "\(m)-minute"
-    }
-}
-
-struct BankedReset: Equatable, Identifiable {
-    var id: Int
-    var title: String?
-    var expiresAt: Date?
-}
-
-enum Source: Equatable { case live, sessionLogs }
-
-struct Snapshot: Equatable {
-    var windows: [UsageWindow] = []          // longest window first
-    var resetsAvailable: Int?                 // nil = unknown
-    var resets: [BankedReset] = []
-    var creditsBalance: Double?
-    var creditsUnlimited = false
-    var limitReached: String?
-    var asOf: Date
-    var source: Source
-
-    var weekly: UsageWindow? { windows.first(where: { $0.isWeekly }) ?? windows.first }
-    var shortWindows: [UsageWindow] { windows.filter { $0 != weekly } }
-    /// The window that binds hardest; drives the menu-bar text and tint.
-    var headline: UsageWindow? { windows.min(by: { $0.remainingPercent < $1.remainingPercent }) }
-}
-
-enum Parse {
-    static func window(_ any: Any?) -> UsageWindow? {
-        guard let d = any as? [String: Any] else { return nil }
-        guard let used = (d["usedPercent"] ?? d["used_percent"]) as? NSNumber else { return nil }
-        let mins = (d["windowDurationMins"] ?? d["window_minutes"]) as? NSNumber
-        let reset = (d["resetsAt"] ?? d["resets_at"]) as? NSNumber
-        return UsageWindow(usedPercent: Int(used.doubleValue.rounded()),
-                           minutes: mins?.intValue,
-                           resetsAt: reset.map { Date(timeIntervalSince1970: $0.doubleValue) })
-    }
-
-    static func windows(primary: Any?, secondary: Any?) -> [UsageWindow] {
-        [window(primary), window(secondary)].compactMap { $0 }
-            .sorted { ($0.minutes ?? 0) > ($1.minutes ?? 0) }
-    }
-
-    static func credits(_ any: Any?) -> (Double?, Bool) {
-        guard let c = any as? [String: Any] else { return (nil, false) }
-        let unlimited = (c["unlimited"] as? Bool) ?? false
-        if let s = c["balance"] as? String, let v = Double(s) { return (v, unlimited) }
-        if let n = c["balance"] as? NSNumber { return (n.doubleValue, unlimited) }
-        return (nil, unlimited)
-    }
-
-    /// `account/rateLimits/read` result → Snapshot. Opaque ids and account ids are dropped here.
-    static func live(_ r: [String: Any], at now: Date) -> Snapshot {
-        var rl = r["rateLimits"] as? [String: Any] ?? [:]
-        if let byId = r["rateLimitsByLimitId"] as? [String: Any], let codex = byId["codex"] as? [String: Any] {
-            rl = codex
-        }
-        var s = Snapshot(asOf: now, source: .live)
-        s.windows = windows(primary: rl["primary"], secondary: rl["secondary"])
-        (s.creditsBalance, s.creditsUnlimited) = credits(rl["credits"])
-        s.limitReached = rl["rateLimitReachedType"] as? String
-        if let rc = r["rateLimitResetCredits"] as? [String: Any] {
-            s.resetsAvailable = (rc["availableCount"] as? NSNumber)?.intValue
-            let rows = (rc["credits"] as? [[String: Any]]) ?? []
-            s.resets = rows.enumerated().compactMap { i, c in
-                if let st = c["status"] as? String, st != "available" { return nil }
-                return BankedReset(id: i, title: c["title"] as? String,
-                                   expiresAt: (c["expiresAt"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) })
-            }.sorted { ($0.expiresAt ?? .distantFuture) < ($1.expiresAt ?? .distantFuture) }
-        }
-        return s
-    }
-}
-
 /// Fallback + credit-history seed: newest `token_count` rate_limits in ~/.codex/sessions.
 enum SessionLogs {
     static var root: URL { Setup.codexHome.appendingPathComponent("sessions") }
@@ -159,55 +74,6 @@ enum SessionLogs {
             }
         }
         return out
-    }
-}
-
-/// Balance samples → recent burn. Stored locally (time + balance only).
-final class CreditHistory {
-    private(set) var samples: [(Date, Double)] = []
-    private let url: URL
-
-    init(dir: URL) {
-        url = dir.appendingPathComponent("credits.json")
-        if let d = try? Data(contentsOf: url), let arr = try? JSONSerialization.jsonObject(with: d) as? [[Double]] {
-            samples = arr.compactMap { $0.count == 2 ? (Date(timeIntervalSince1970: $0[0]), $0[1]) : nil }
-        }
-    }
-
-    var isEmpty: Bool { samples.isEmpty }
-
-    func merge(_ new: [(Date, Double)]) {
-        samples += new
-        samples.sort { $0.0 < $1.0 }
-        let cutoff = Date().addingTimeInterval(-8 * 86400)
-        samples.removeAll { $0.0 < cutoff }
-        // thin to one sample per 10 minutes
-        var thinned: [(Date, Double)] = []
-        for s in samples {
-            if let last = thinned.last, s.0.timeIntervalSince(last.0) < 600 { thinned[thinned.count - 1] = s } else { thinned.append(s) }
-        }
-        samples = thinned
-        save()
-    }
-
-    func add(_ balance: Double, at: Date) { merge([(at, balance)]) }
-
-    /// Average credits used per day over the last `days`, ignoring top-ups.
-    /// Needs at least 12 h of history; nil otherwise.
-    func burnPerDay(days: Double = 7) -> Double? {
-        let cutoff = Date().addingTimeInterval(-days * 86400)
-        let window = samples.filter { $0.0 >= cutoff }
-        guard let first = window.first, let last = window.last else { return nil }
-        let span = last.0.timeIntervalSince(first.0)
-        guard span >= 12 * 3600 else { return nil }
-        let used = first.1 - last.1            // net; a top-up inside the window hides burn
-        guard used >= 0 else { return nil }
-        return used / (span / 86400)
-    }
-
-    private func save() {
-        let arr = samples.map { [$0.0.timeIntervalSince1970, $0.1] }
-        if let d = try? JSONSerialization.data(withJSONObject: arr) { try? d.write(to: url, options: .atomic) }
     }
 }
 
@@ -304,18 +170,25 @@ final class Store: ObservableObject {
                     result = .success(out)
                 }
             }
+            // Parse off the main thread; an unrecognized response is a failure, never an empty snapshot.
+            var parsed: Result<Snapshot, AppServer.Failure>
+            switch result {
+            case .success(let out):
+                parsed = Parse.live(out.rateLimits, at: Date()).map { .success($0) }
+                    ?? .failure(.rpc("unrecognized rateLimits response"))
+            case .failure(let e): parsed = .failure(e)
+            }
             var fallback: Snapshot? = nil
             var seed: [(Date, Double)] = []
-            if case .failure = result, simulate != "unavailable" { fallback = SessionLogs.latestSnapshot() }
+            if case .failure = parsed, simulate != "unavailable" { fallback = SessionLogs.latestSnapshot() }
             if seedHistory { seed = SessionLogs.creditSamples(days: 7) }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isReading = false
                 self.now = Date()
                 if !seed.isEmpty { self.history.merge(seed) }
-                switch result {
-                case .success(let out):
-                    let snap = Parse.live(out.rateLimits, at: Date())
+                switch parsed {
+                case .success(let snap):
                     self.snapshot = snap
                     self.lastLiveRead = snap.asOf
                     self.lastError = nil

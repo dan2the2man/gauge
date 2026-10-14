@@ -14,8 +14,10 @@
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSHumanReadableCopyright</key><string>© 2026 Danny O'Halloran. MIT License.</string>
-  <key>SUFeedURL</key><string>https://gauge.dohalloran.com/appcast.xml</string>
+  <key>SUFeedURL</key><string>https://apps.dohalloran.com/gauge/appcast.xml</string>
   <key>SUPublicEDKey</key><string>lS+fOKX3LlBfegZpZzzEwPUUp4sJspr+3sHuF0+rZx4=</string>
   <key>SUEnableAutomaticChecks</key><true/>
+  <key>SURequireSignedFeed</key><true/>
+  <key>SUVerifyUpdateBeforeExtraction</key><true/>
 </dict>
 </plist>

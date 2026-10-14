@@ -169,10 +169,12 @@ enum Setup {
         if let h = ProcessInfo.processInfo.environment["CODEX_HOME"], !h.isEmpty { return URL(fileURLWithPath: h) }
         return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
     }
-    /// Called after a failed live read. Missing binary → not installed. A failed read with no
-    /// Codex login on disk → not signed in. (Keychain-stored logins still read fine and never get here.)
+    /// Called after a failed live read. Missing binary → not installed. An auth error from the
+    /// app-server → not signed in, whether or not auth.json exists (it can be present but expired or
+    /// logged out). A failed read with no Codex login on disk → not signed in.
     static func diagnose(_ f: AppServer.Failure) -> Issue? {
         if case .missing = f { return .codexMissing }
+        if case .rpc(let m) = f, Parse.isAuthError(m) { return .notSignedIn }
         let fm = FileManager.default
         if !fm.fileExists(atPath: codexHome.appendingPathComponent("auth.json").path) {
             if case .rpc = f { return .notSignedIn }

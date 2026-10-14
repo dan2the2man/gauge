@@ -111,6 +111,7 @@ struct ReadingIndicator: View {
 struct FreshnessLine: View {
     @ObservedObject var store: Store
     var exact = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         let now = store.now
         HStack(spacing: 5) {
@@ -134,7 +135,7 @@ struct FreshnessLine: View {
         }
         .font(.caption)
         .foregroundStyle(.secondary)
-        .animation(.easeOut(duration: 0.15), value: store.isReading)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: store.isReading)
         .help(store.lastError.map { "Last read failed: \($0)" } ?? "")
     }
 }
