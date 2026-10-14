@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gauge — Codex usage in your menu bar</title>
+<meta name="description" content="A quiet Codex usage meter for the macOS menu bar and desktop.">
+<link rel="alternate" type="application/rss+xml" title="Gauge updates" href="/appcast.xml">
+<style>
+  :root{--bg:#0e0f12;--fg:#f2f2f4;--dim:#9a9ca3;--track:rgba(255,255,255,.12);--accent:#0a84ff;--orange:#ff9f0a;--red:#ff453a;color-scheme:dark light}
+  @media (prefers-color-scheme:light){:root{--bg:#eceef2;--fg:#1d1d1f;--dim:#6e6e73;--track:rgba(0,0,0,.1);--accent:#007aff}}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(1200px 600px at 50% -10%,rgba(10,132,255,.18),transparent),var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif}
+  main{width:min(420px,92vw);padding:28px;border-radius:22px;background:rgba(127,127,127,.12);backdrop-filter:blur(30px) saturate(1.6);-webkit-backdrop-filter:blur(30px) saturate(1.6);border:1px solid rgba(255,255,255,.14);box-shadow:0 20px 60px rgba(0,0,0,.25)}
+  .row{display:flex;justify-content:space-between;align-items:baseline}
+  h1{margin:0;font-size:15px;font-weight:600}
+  .pct{font:600 34px/1 ui-monospace,"SF Mono",monospace;font-variant-numeric:tabular-nums}
+  .pct small{font:400 15px -apple-system,system-ui;color:var(--dim)}
+  .bar{height:8px;border-radius:99px;background:var(--track);overflow:hidden;margin:12px 0 6px}
+  .bar i{display:block;height:100%;width:0;border-radius:99px;background:var(--accent);animation:fill 1.2s cubic-bezier(.2,.8,.2,1) .2s forwards}
+  @keyframes fill{to{width:63%}}
+  @media (prefers-reduced-motion:reduce){.bar i{animation:none;width:63%}}
+  .cap{font:12px ui-monospace,"SF Mono",monospace;color:var(--dim)}
+  p{color:var(--dim);margin:20px 0}
+  a.dl{display:block;text-align:center;padding:11px;border-radius:12px;background:var(--accent);color:#fff;text-decoration:none;font-weight:600}
+  a.dl:hover{filter:brightness(1.1)}
+  .meta{margin-top:14px;font-size:12px;color:var(--dim);text-align:center}
+  .meta a{color:inherit}
+</style>
+</head>
+<body>
+<main>
+  <div class="row"><h1>Gauge</h1><span class="pct">63%<small> left</small></span></div>
+  <div class="bar"><i></i></div>
+  <div class="cap">Weekly · resets in 4d 13h</div>
+  <p>A quiet Codex usage meter for your menu bar and desktop. It reads only your own usage, locally, from the Codex app on your Mac — no accounts, no servers, no telemetry.</p>
+  <a class="dl" href="https://github.com/dan2the2man/gauge/releases/latest/download/Gauge.dmg">Download for macOS</a>
+  <div class="meta">macOS 14+ · Requires Codex, signed in · Updates automatically<br>
+    <a href="https://github.com/dan2the2man/gauge">Source on GitHub</a> · <a href="/appcast.xml">Appcast</a> · MIT</div>
+</main>
+</body>
+</html>

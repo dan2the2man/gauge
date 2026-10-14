@@ -1,0 +1,18 @@
+.build/
+.swiftpm/
+build/
+dist/
+.tools/
+*.dmg
+*.zip
+*.xcarchive
+.DS_Store
+# never commit signing material
+*.p12
+*.cer
+*.pem
+*.key
+*_priv*
+.env*
+site/node_modules/
+site/.vercel/
