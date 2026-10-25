@@ -6,7 +6,7 @@ A quiet Codex usage meter for the macOS menu bar and desktop.
 
 Gauge reads only the current user's own Codex usage, through the Codex install on your Mac. Gauge has no accounts or telemetry of its own; see **Data boundaries** for exactly what it touches. If Codex isn't installed or signed in, it says so on first launch and in the menu.
 
-- **Menu bar:** `37% left · 4d 13h` shows the percent **remaining** in the tightest window (weekly today). The text turns orange at 20% left and red at 5% left, and is dimmed when the data is stale.
+- **Menu bar:** Gauge uses one compact icon-sized status item so it coexists with crowded menu-bar apps. Hover the icon or open the popover for the exact percent **remaining** in the tightest window (weekly today) plus reset countdown; the icon turns orange at 20% left, red at 5% left, and dims when the data is stale.
 - **Popover:** clicking the menu bar item opens a glass panel. The header shows the window and "As of" time, with Refresh (⌘R), Open Usage Settings (⌘,) and a gear menu (Open at Login, Check for Updates…, Quit ⌘Q). Below that are a large percent left with a bar (green above 25%, orange from 10 to 25%, red under 10%) and the reset time, then Banked resets (date pills, orange within 3 days) and Credits (with average daily burn) cards. The bottom row has a Desktop Tile toggle plus Lock, Ignore Clicks and Reset Position. Esc closes it.
 - **Desktop tile:** a glass panel at desktop level. It sits below all windows, appears on all Spaces, and stays out of Cmd-Tab. Drag it anywhere; its position is remembered. Hovering shows the exact reset date and time and the exact as-of time.
 

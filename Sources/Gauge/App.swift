@@ -5,6 +5,8 @@ import ServiceManagement
 import Sparkle
 
 final class AppController: NSObject, NSApplicationDelegate {
+    private static let statusSymbolName = "gauge.with.dots.needle.bottom.50percent"
+    private static let statusSymbolSize: CGFloat = 15
     private let store = Store()
     private var statusItem: NSStatusItem!
     private var popover: PopoverController!
@@ -21,7 +23,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         applyAppearance(defaults.string(forKey: "appearance"))
         defaults.register(defaults: ["showTile": true, "tileClickThrough": false])
 
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.autosaveName = "GaugeStatusItem"
         tile = TileController(store: store)
         buildPopover()
@@ -73,24 +75,44 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func render() {
         guard let button = statusItem.button else { return }
         let snap = store.snapshot
-        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.menuBarFont(ofSize: 0).pointSize, weight: .regular)
+        statusItem.length = NSStatusItem.squareLength
+        button.title = ""
+        button.attributedTitle = NSAttributedString(string: "")
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleProportionallyDown
         if let w = snap?.headline {
-            var text = "\(w.remainingPercent)% left"
-            if let c = Fmt.countdown(to: w.resetsAt, now: store.now) { text += " · \(c)" }
-            var attrs: [NSAttributedString.Key: Any] = [.font: font]
-            if let c = Level(remaining: w.remainingPercent).nsColor { attrs[.foregroundColor] = c }
-            button.image = nil
-            button.attributedTitle = NSAttributedString(string: text, attributes: attrs)
+            let detail = menuBarDetail(for: w, stale: store.isStale)
+            button.image = statusImage(accessibilityDescription: detail)
+            button.contentTintColor = store.isStale ? nil : Level(remaining: w.remainingPercent).nsColor
             button.appearsDisabled = store.isStale
-            button.toolTip = store.isStale ? "Codex usage (stale)" : "Codex usage"
+            button.toolTip = detail
+            button.setAccessibilityLabel(detail)
         } else {
-            button.attributedTitle = NSAttributedString(string: "")
-            button.image = NSImage(systemSymbolName: "gauge.with.dots.needle.bottom.50percent",
-                                   accessibilityDescription: "Codex usage unavailable")
-            button.image?.isTemplate = true
+            let detail = "Codex usage unavailable"
+            button.image = statusImage(accessibilityDescription: detail)
+            button.contentTintColor = nil
             button.appearsDisabled = true
-            button.toolTip = "Codex usage unavailable"
+            button.toolTip = detail
+            button.setAccessibilityLabel(detail)
         }
+    }
+
+    private func menuBarDetail(for window: UsageWindow, stale: Bool) -> String {
+        var detail = "Codex usage: \(window.remainingPercent)% left"
+        if let countdown = Fmt.countdown(to: window.resetsAt, now: store.now) {
+            detail += " · resets in \(countdown)"
+        }
+        if stale { detail += " · stale" }
+        return detail
+    }
+
+    private func statusImage(accessibilityDescription: String) -> NSImage? {
+        let image = NSImage(systemSymbolName: Self.statusSymbolName,
+                            accessibilityDescription: accessibilityDescription)
+        let config = NSImage.SymbolConfiguration(pointSize: Self.statusSymbolSize, weight: .regular)
+        let configured = image?.withSymbolConfiguration(config) ?? image
+        configured?.isTemplate = true
+        return configured
     }
 
     private func buildPopover() {
@@ -182,7 +204,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         case "appearance:light": applyAppearance("light")
         case "appearance:system": applyAppearance(nil)
         case "statusInfo":
-            if let w = statusItem.button?.window { Log.write("status item frame \(NSStringFromRect(w.frame))") }
+            if let w = statusItem.button?.window {
+                Log.write("status item length \(statusItem.length) frame \(NSStringFromRect(w.frame))")
+            }
         case "hoverOn": store.debugHover = true
         case "hoverOff": store.debugHover = false
         case "dragTest":
